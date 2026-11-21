@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Token launch radar</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1><span class="dot"></span>Token launch radar</h1>
+    <p class="sub">Protocols that record no token yet: what a launch could be worth, how likely it is, and what it costs to farm one.</p>
+  </div>
+  <dl id="meta" class="meta"></dl>
+</header>
+<main>
+  <section id="kpis" class="kpis" aria-label="Key figures"></section>
+  <section class="card slim"><h2>Protocol accounting <small>every protocol in one bucket</small></h2><div id="ledger"></div></section>
+  <section class="card slim"><h2>Integrity <small>recomputed in this browser from data.js</small></h2><div id="checks" class="checks"></div></section>
+  <section id="board" class="card">
+    <h2>Board <small id="count"></small></h2>
+    <div class="bar">
+      <div class="tabs" id="tierTabs"></div>
+      <div class="tabs" id="vdTabs"></div>
+      <input id="q" type="search" placeholder="search name, slug, category" aria-label="Search">
+      <select id="cat" aria-label="Category"></select>
+      <select id="chain" aria-label="Chain"></select>
+    </div>
+    <div class="sandbox">
+      <b>Farm sandbox</b>
+      <span>Deposit <span class="seg" id="depSeg"></span></span>
+      <span>Drop share <input id="drop" type="range" min="1" max="40" step="1" aria-label="Drop share"> <output id="dropOut"></output></span>
+      <span>Horizon <span class="seg" id="wkSeg"></span></span>
+      <span class="acts"><button id="cmpBtn" type="button">Compare 0</button><button id="csv" type="button">CSV</button><button id="json" type="button">JSON</button><button id="reset" type="button">Reset</button></span>
+      <span class="hint">slice = implied value x drop share x (deposit / TVL); net = slice - gas - fees - 4% carry</span>
+    </div>
+    <div class="scroll"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+  </section>
+  <section class="card">
+    <h2>Out-of-sample evidence <small>every term earns its place on held-out protocols</small></h2>
+    <div class="two"><div id="evV"></div><div id="evO"></div></div>
+    <div class="two">
+      <figure><canvas id="cv1" width="640" height="340"></canvas><figcaption>Market cap vs TVL (log-log): traded tokens grey, board implied values green, fitted line with P10-P90 band.</figcaption></figure>
+      <figure><canvas id="cv2" width="640" height="340"></canvas><figcaption>Peers that record a token, by years listed: real share vs held-out (leave-one-out) prediction.</figcaption></figure>
+    </div>
+  </section>
+  <section id="compare" class="card"><h2>Compare <small>tick up to 4 rows on the board</small></h2><div id="cmp"></div></section>
+  <section class="card" id="method">
+    <h2>How a launch is priced</h2>
+    <p><b>Launch value</b> is the market cap a protocol's token could carry: log10(cap) is fitted on log10(TVL) across protocols whose token trades, one row per ticker. Each extra term (category, age, growth, chains) is kept only if it lowers the held-out miss in both a leave-one-out and a walk-forward test.</p>
+    <p><b>Token odds</b> is the chance that a protocol like it ever records a token: a logistic regression fitted by gradient descent on its peers, on how long it has run with no token, its 7-day TVL growth and its category.</p>
+    <p><b>Implied value = launch value x odds.</b> A protocol records no token in DefiLlama's data; that is the entry's own estimate, not a prediction of when or whether one is issued. Gas figures per chain are stated assumptions.</p>
+  </section>
+</main>
+<aside id="detail" class="drawer" hidden></aside>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
