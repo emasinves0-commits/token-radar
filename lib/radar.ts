@@ -2,7 +2,7 @@
 // the data the dashboard reads. Everything here is a function of the snapshot's bytes.
 import { BUCKETS, bucketOf, fitModel, nearestComps, score, TERM_LABEL } from './model.ts';
 import type { Bucket, Model, Protocol, Snapshot, Term } from './model.ts';
-import { breakEvenDeposit, econ, planFor, stepText } from './farm.ts';
+import { econ, planFor, stepText } from './farm.ts';
 
 export const DEFAULTS = { deposit: 1000, drop: 0.2, weeks: 13 };
 
@@ -10,7 +10,6 @@ export interface BoardRow {
   slug: string; name: string; rank: number; implied_value_usd: number; farm_steps: string[];
   tier: string; category: string | null; chains: string[]; tvl_usd: number; change_7d: number | null; age_years: number | null;
   token_odds: number; launch_value_usd: number; implied_range_p25_p75: [number, number]; verdict: string; net_usd: number; net_per_hour_usd: number;
-  breakeven_usd: number | null; range_kind: 'category' | 'global'; range_peers: number;
 }
 
 /** FNV-1a (32-bit) over the UTF-8 bytes of a string, as 8 hex digits. The page runs the identical function. */
@@ -44,7 +43,6 @@ export function buildRadar(snap: Snapshot): { board: BoardRow[]; data: unknown; 
   scored.forEach(({ p, b, s }, i) => {
     const plan = planFor(p, s.f.age, DEFAULTS.deposit);
     const e = econ(plan.steps, s.implied, p.tvl_usd, DEFAULTS.deposit, DEFAULTS.drop, DEFAULTS.weeks);
-    const be = breakEvenDeposit(plan.steps, s.implied, p.tvl_usd, DEFAULTS.drop, DEFAULTS.weeks);
     const rank = i + 1;
     total += s.implied;
     const rg = [s.capLo10, s.capLo25, s.capHi75, s.capHi90].map((x) => Math.max(1, Math.round(x * s.odds)));
@@ -52,14 +50,12 @@ export function buildRadar(snap: Snapshot): { board: BoardRow[]; data: unknown; 
       slug: p.slug, name: p.name, rank, implied_value_usd: s.implied, farm_steps: plan.steps.map((st) => stepText(st, DEFAULTS.deposit, DEFAULTS.weeks)),
       tier: TIER[b]!, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, change_7d: p.change_7d, age_years: s.f.age === null ? null : r3(s.f.age),
       token_odds: r4(s.odds), launch_value_usd: Math.round(s.cap), implied_range_p25_p75: [rg[1]!, rg[2]!], verdict: e.verdict, net_usd: Math.round(e.net * 100) / 100, net_per_hour_usd: Math.round(e.perHour * 100) / 100,
-      breakeven_usd: be === null ? null : Math.round(be), range_kind: s.rangeKind, range_peers: s.rangeN,
     });
     rows.push({
       s: p.slug, n: p.name, k: rank, t: TIER[b], c: p.category, h: p.chains, ch: plan.chain, v: s.implied, tv: p.tvl_usd, g: p.change_7d, a: s.f.age === null ? null : r3(s.f.age),
       o: r4(s.odds), lv: Math.round(s.cap), r: rg, vt: s.valueParts.map(([t, x]) => [t, r3(x)]), ot: s.oddsParts.map(([t, x]) => [t, r3(x)]), c0: r3(s.c0), b0: r3(s.b0),
       st: plan.steps.map((st) => [st.a, r4(st.gas), r3(st.cap), r4(st.fee), st.min, st.w]),
       cm: nearestComps(model, p).map((c) => [c.name, c.symbol, c.tvl, c.mcap]),
-      be: be === null ? null : Math.round(be), rk: s.rangeKind === 'category' ? 'c' : 'g', rn: s.rangeN,
     });
   });
 
@@ -69,7 +65,6 @@ export function buildRadar(snap: Snapshot): { board: BoardRow[]; data: unknown; 
   const fitInfo = {
     valueTable: model.valueTable, oddsTable: model.oddsTable, valueKept: model.valueKept.map((t) => TERM_LABEL[t]), oddsKept: model.oddsKept.map((t) => TERM_LABEL[t]),
     termLabel: TERM_LABEL as Record<Term, string>, resid: Object.fromEntries(Object.entries(model.resid).map(([k, v]) => [k, r3(v)])),
-    catRanges: model.catRanges,
     calib: Object.fromEntries(Object.entries(model.calib).map(([k, v]) => [k, r4(v)])), miss: Object.fromEntries(Object.entries(model.missFinal).map(([k, v]) => [k, r3(v)])),
     oddsFinal: Object.fromEntries(Object.entries(model.oddsFinal).map(([k, v]) => [k, r4(v)])),
     valueCoef: { c0: r3(model.valueFit.c0), ...Object.fromEntries(Object.entries(model.valueFit.beta).map(([k, v]) => [k, r3(v!)])), nComps: model.comps.length },
