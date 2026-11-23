@@ -6,10 +6,6 @@
 // the screenshots and dossier.json. Nothing here reads the clock, the network or a random source, so two
 // runs write the same bytes.
 //
-// v2 (radar-2.1): ranges are priced per kind — a category with at least eight priced comps gets its own
-// leave-one-out residual band — and every row carries its break-even deposit, the minimum viable capital
-// for its farm plan at the default drop share and horizon.
-//
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input path/to/snapshot.json
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
