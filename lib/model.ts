@@ -7,6 +7,9 @@
 //  3. Every term is added in a fixed order and kept only if it lowers the held-out error in BOTH a
 //     leave-one-out test and a walk-forward test (fit on protocols listed earlier, test on those listed later).
 //  4. implied value = fitted launch value x token odds.
+//  5. Ranges are priced per kind (v2): a category with at least eight priced comps gets its own
+//     leave-one-out residual band (P10/P25/P75/P90), so a protocol's range comes from peers of its own
+//     kind; thinner categories fall back to the global band.
 
 export interface Protocol {
   slug: string; name: string; category: string | null; chains: string[]; tvl_usd: number;
@@ -314,6 +317,7 @@ export interface Model {
   asOf: string; version: string;
   comps: { f: Feat; y: number; p: Protocol }[]; valueFit: ValueFit; valueKept: Term[];
   valueTable: ValueRow[]; resid: { p10: number; p25: number; p75: number; p90: number; sigma: number };
+  catRanges: { cat: string; n: number; p10: number; p25: number; p75: number; p90: number }[];
   calib: { looIqr: number; looIdr: number; wfIqr: number; wfIdr: number; nLoo: number; nWf: number };
   missFinal: { loo: number; wf: number; baseLoo: number; baseWf: number };
   oddsFit: OddsFit; oddsKept: Term[]; oddsTable: OddsRow[]; peers: { f: Feat; y: number; slug: string }[];
@@ -353,6 +357,20 @@ export function fitModel(snap: Snapshot): Model {
   const valueFit = fitValue(F, Y, kept);
   const lr = cur.looSigned;
   const resid = { p10: quantile(lr, 0.1), p25: quantile(lr, 0.25), p75: quantile(lr, 0.75), p90: quantile(lr, 0.9), sigma: sd(lr) };
+
+  // Per-category residual bands (v2): the same leave-one-out misses, grouped by the comp's own
+  // category, so a protocol's range is priced from peers of its own kind. A category needs at
+  // least eight priced comps for its quantiles to mean anything; thinner kinds use the global band.
+  const byCat = new Map<string, number[]>();
+  comps.forEach((c, i) => {
+    const arr = byCat.get(c.f.cat) ?? [];
+    arr.push(lr[i]!);
+    byCat.set(c.f.cat, arr);
+  });
+  const catRanges = [...byCat.entries()]
+    .filter(([, a]) => a.length >= 8)
+    .map(([cat, a]) => ({ cat, n: a.length, p10: round(quantile(a, 0.1), 3), p25: round(quantile(a, 0.25), 3), p75: round(quantile(a, 0.75), 3), p90: round(quantile(a, 0.9), 3) }))
+    .sort((a, b) => b.n - a.n || (a.cat < b.cat ? -1 : 1));
 
   // calibration: the range's quantiles come from residuals the tested point never touched.
   let inI = 0, inD = 0;
@@ -412,7 +430,7 @@ export function fitModel(snap: Snapshot): Model {
     ageBars.push({ label: b + 2 === edges.length ? `${edges[b]}y+` : `${edges[b]}-${edges[b + 1]}y`, n: idx.length, real: mean(idx.map((i) => PY[i]!)), pred: mean(idx.map((i) => fh.loo[i]!)) });
   }
   return {
-    asOf: snap.as_of, version: 'radar-2.0', comps, valueFit, valueKept: kept, valueTable, resid, calib, missFinal,
+    asOf: snap.as_of, version: 'radar-2.1', comps, valueFit, valueKept: kept, valueTable, resid, catRanges, calib, missFinal,
     oddsFit, oddsKept: oKept, oddsTable, peers,
     oddsFinal: { brierLoo: oCur.bl, brierWf: oCur.bw, baseLoo: oddsTable[0]!.brierLoo, baseWf: oddsTable[0]!.brierWf, n: PY.length, rate: mean(PY), nWf: wfY.length },
     ageBars,
@@ -423,15 +441,19 @@ export function fitModel(snap: Snapshot): Model {
 export interface Scored {
   f: Feat; valueParts: [Term, number][]; c0: number; logCap: number; cap: number; capLo10: number; capLo25: number; capHi75: number; capHi90: number;
   oddsParts: [Term, number][]; b0: number; odds: number; implied: number; ageFilled: boolean;
+  rangeKind: 'category' | 'global'; rangeCat: string | null; rangeN: number;
 }
 export function score(m: Model, p: Protocol): Scored {
   const f = featOf(p, m.asOf);
   const v = valueParts(m.valueFit, f), o = oddsParts(m.oddsFit, f);
   const odds = sigmoid(o.logit);
   const cap = 10 ** v.pred;
+  const cr = m.catRanges.find((c) => c.cat === f.cat);
+  const band = cr ?? { p10: m.resid.p10, p25: m.resid.p25, p75: m.resid.p75, p90: m.resid.p90 };
   return {
-    f, valueParts: v.parts, c0: v.c0, logCap: v.pred, cap, capLo10: 10 ** (v.pred + m.resid.p10), capLo25: 10 ** (v.pred + m.resid.p25), capHi75: 10 ** (v.pred + m.resid.p75),
-    capHi90: 10 ** (v.pred + m.resid.p90), oddsParts: o.parts, b0: o.b0, odds, implied: Math.max(1, Math.round(cap * odds)), ageFilled: f.age === null,
+    f, valueParts: v.parts, c0: v.c0, logCap: v.pred, cap, capLo10: 10 ** (v.pred + band.p10), capLo25: 10 ** (v.pred + band.p25), capHi75: 10 ** (v.pred + band.p75),
+    capHi90: 10 ** (v.pred + band.p90), oddsParts: o.parts, b0: o.b0, odds, implied: Math.max(1, Math.round(cap * odds)), ageFilled: f.age === null,
+    rangeKind: cr ? 'category' : 'global', rangeCat: cr ? cr.cat : null, rangeN: cr ? cr.n : 0,
   };
 }
 
