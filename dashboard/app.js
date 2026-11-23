@@ -28,19 +28,12 @@ const E = new Map();
 const recompute = () => { for (const r of R.rows) E.set(r.s, econ(r)); };
 const bySlug = new Map(R.rows.map((r) => [r.s, r]));
 
-/** Break-even deposit as a short board label: 'min $X' or 'min —' when no deposit breaks even. */
-function beShort(r) {
-  const f = r.st.reduce((a, t) => a + t[3], 0), gas = r.st.reduce((a, t) => a + t[1] * (t[5] ? S.wk : 1), 0), k = r.v * S.drop / r.tv - f - 0.04 * S.wk / 52;
-  return k <= 0 ? 'min —' : `min ${usd(gas / k)}`;
-}
-
 // ---------- header, KPIs, ledger, integrity
 $('#meta').innerHTML = [['Snapshot', R.meta.asOf], ['Protocols', R.meta.protocols], ['Board rows', R.rows.length], ['Model', R.meta.version]].map(([a, b]) => `<div><dt>${a}</dt><dd>${esc(b)}</dd></div>`).join('');
 
 function kpis() {
   const wl = R.rows.filter((r) => r.t === 'W').length, tot = R.rows.reduce((a, r) => a + r.v, 0);
   const fm = R.rows.filter((r) => E.get(r.s).vd === 'FARM').length, th = R.rows.filter((r) => E.get(r.s).vd === 'THIN').length;
-  const best = Math.max(...R.rows.map((r) => E.get(r.s).ph));
   const m = F.miss, c = F.calib;
   const k = [
     ['', 'Watchlist ranked', `${wl}<small>/${R.watch.length}</small>`, 'every house-list slug is on the board'],
@@ -48,17 +41,17 @@ function kpis() {
     ['v', 'Total implied value', big(tot), 'launch value x token odds, summed'],
     ['g', 'Value miss, held out', `${m.loo.toFixed(2)}x<small> vs ${m.baseLoo.toFixed(2)}x</small>`, `median miss, leave-one-out; walk-forward ${m.wf.toFixed(2)}x vs flat ${m.baseWf.toFixed(2)}x`],
     ['a', 'Range honesty', `${Math.round(c.looIqr * 100)}%<small> / ${Math.round(c.looIdr * 100)}%</small>`, `real caps inside P25-P75 / P10-P90 (targets 50 / 80); walk-forward ${Math.round(c.wfIqr * 100)} / ${Math.round(c.wfIdr * 100)}`],
-    ['g', 'Worth farming', `${fm}<small> FARM</small>`, `best ${usd(best)}/h; ${th} THIN of ${R.rows.length} at ${usd(S.dep)}, ${Math.round(S.drop * 100)}% drop, ${S.wk} wk`],
+    ['g', 'Worth farming', `${fm}<small> FARM</small>`, `${th} THIN of ${R.rows.length} at ${usd(S.dep)}, ${Math.round(S.drop * 100)}% drop, ${S.wk} wk`],
   ];
   $('#kpis').innerHTML = k.map(([c2, h, n, p]) => `<div class="kpi ${c2}"><h3>${h}</h3><div class="n">${n}</div><p>${p}</p></div>`).join('');
 }
 
 const LCOL = { watch: '#60a5fa', early: '#2dd4bf', off: '#a78bfa', comp: '#cbd5e1', nocap: '#94a3b8', kin: '#64748b', bridge: '#fb923c', lst: '#f59e0b', cex: '#f87171', ver: '#be185d' };
-const LSHORT = { watch: 'watchlist', early: 'early', off: 'off-list', comp: 'comps', nocap: 'no cap', kin: 'kin', bridge: 'bridge', lst: 'staking', cex: 'exchange', ver: 'versioned' };
 function ledger() {
   const n = R.ledger.reduce((a, l) => a + l.n, 0);
   $('#ledger').innerHTML = `<div class="stack">${R.ledger.map((l) => `<i style="flex:${l.n};background:${LCOL[l.k]}" title="${esc(l.label)}: ${l.n}"></i>`).join('')}</div>
-  <div class="leg">${R.ledger.map((l) => `<div title="${esc(l.note)}"><span class="sw" style="background:${LCOL[l.k]}"></span>${LSHORT[l.k]}<b>${l.n}</b></div>`).join('')}</div>`;
+  <div class="leg">${R.ledger.map((l) => `<div title="${esc(l.note)}"><span class="sw" style="background:${LCOL[l.k]}"></span>${esc(l.label)}<b>${l.n}</b></div>`).join('')}</div>
+  <div class="tot">${R.ledger.map((l) => l.n).join(' + ')} = ${n} of ${R.meta.protocols}</div>`;
   $('#ledger').closest('.card').querySelector('h2 small').textContent += ` (${n} of ${R.meta.protocols})`;
 }
 
@@ -70,18 +63,16 @@ function checks() {
   const lsum = R.ledger.reduce((a, l) => a + l.n, 0), wl = R.watch.filter((s) => have.has(s)).length;
   const sum2 = fnv1a(canon);
   const list = [
-    ['row count', R.rows.length === R.check.rows, `${R.rows.length} = ${R.check.rows}`],
-    ['checksum', sum2 === R.check.checksum, sum2],
-    ['ranks 1..N', ids.every((k, i) => k === i + 1), `1..${ids.length}`],
-    ['values sorted', vs.every((v, i) => i === 0 || v <= vs[i - 1]), `${big(vs[0])} to ${big(vs[vs.length - 1])}`],
-    ['totals', sum === R.check.total, big(sum)],
-    ['watchlist', wl === R.watch.length, `${wl}/${R.watch.length}`],
-    ['ledger', lsum === R.meta.protocols, `${lsum}/${R.meta.protocols}`],
-    ['tiers', cnt('W') === lg.watch && cnt('E') === lg.early && cnt('O') === lg.off, `${cnt('W')}/${cnt('E')}/${cnt('O')}`],
+    ['row count equals board rows', R.rows.length === R.check.rows, `${R.rows.length} = ${R.check.rows}`],
+    ['checksum (FNV-1a) matches', sum2 === R.check.checksum, sum2],
+    ['ranks run 1..N in order', ids.every((k, i) => k === i + 1), `1..${ids.length}`],
+    ['implied values never rise', vs.every((v, i) => i === 0 || v <= vs[i - 1]), `${big(vs[0])} to ${big(vs[vs.length - 1])}`],
+    ['totals equal', sum === R.check.total, big(sum)],
+    ['watchlist covered', wl === R.watch.length, `${wl}/${R.watch.length}`],
+    ['ledger sums to protocols', lsum === R.meta.protocols, `${lsum}/${R.meta.protocols}`],
+    ['tier counts match ledger', cnt('W') === lg.watch && cnt('E') === lg.early && cnt('O') === lg.off, `${cnt('W')}/${cnt('E')}/${cnt('O')}`],
   ];
   $('#checks').innerHTML = list.map(([t, ok, d]) => `<div class="chk ${ok ? '' : 'bad'}"><i>${ok ? 'PASS' : 'FAIL'}</i>${t}<span>${esc(d)}</span></div>`).join('');
-  const passed = list.filter(([, ok]) => ok).length;
-  $('#checks').closest('.card').querySelector('h2 small').textContent = `${passed}/${list.length} PASS, recomputed in this browser from data.js`;
 }
 
 // ---------- out-of-sample evidence
@@ -90,7 +81,7 @@ function evidence() {
   const o = F.oddsFinal, v = F.valueCoef;
   $('#evV').className = 'ev';
   $('#evV').innerHTML = `<h3>Value model: median miss multiple on held-out protocols</h3><table><thead><tr><th>term, added in order</th><th>leave-one-out</th><th>walk-forward</th><th>verdict</th></tr></thead><tbody>${vr}</tbody></table>
-  <p class="foot">Fitted on ${v.nComps} traded tokens (one per ticker): log10 cap = ${v.c0} + ${v.tvl} x z(log10 TVL). Kept: ${esc(F.valueKept.join(', '))}. Spread (LOO P10 / P25 / P75 / P90): ${F.resid.p10} / ${F.resid.p25} / ${F.resid.p75} / ${F.resid.p90} dex. A term stays only if it lowers both misses. Ranges are priced per kind where a category has 8+ priced comps (${F.catRanges.map((c) => `${esc(c.cat)} n=${c.n}`).join(', ')}); thinner kinds use the global band.</p>`;
+  <p class="foot">Fitted on ${v.nComps} traded tokens (one per ticker): log10 cap = ${v.c0} + ${v.tvl} x z(log10 TVL). Kept: ${esc(F.valueKept.join(', '))}. Spread (LOO P10 / P25 / P75 / P90): ${F.resid.p10} / ${F.resid.p25} / ${F.resid.p75} / ${F.resid.p90} dex. A term stays only if it lowers both misses.</p>`;
   const or = F.oddsTable.map((r) => `<tr><td>${esc(r.term)}</td><td>${r.brierLoo.toFixed(3)}</td><td>${r.brierWf.toFixed(3)}</td><td>${Math.round(r.rightLoo * 100)}% / ${Math.round(r.rightWf * 100)}%</td><td class="${r.verdict === 'kept' ? 'kept' : r.verdict === 'dropped' ? 'drop' : ''}">${r.verdict}</td></tr>`).join('');
   $('#evO').className = 'ev';
   $('#evO').innerHTML = `<h3>Odds model: Brier score (lower is better) vs the base rate</h3><table><thead><tr><th>term, added in order</th><th>LOO</th><th>walk-fwd</th><th>called right</th><th>verdict</th></tr></thead><tbody>${or}</tbody></table>
@@ -162,7 +153,7 @@ function board() {
     <td class="nm">${esc(r.n)}<span class="chip ${r.t}">${TIER[r.t]}</span><small>${esc(r.c || 'no category')} on ${esc(r.h.slice(0, 3).join(', '))}${r.h.length > 3 ? ` +${r.h.length - 3}` : ''}</small></td>
     <td>${big(r.tv)}</td><td class="${cls(r.g)}">${pct(r.g)}</td><td>${yrs(r.a)}</td><td>${(r.o * 100).toFixed(0)}%</td><td>${big(r.lv)}</td>
     <td><b>${big(r.v)}</b><small>${big(r.r[1])} - ${big(r.r[2])}</small></td>
-    <td><span class="chip ${e.vd}">${e.vd}</span> <span class="${cls(e.net)}">${usd(e.net)}</span><small>${beShort(r)}</small></td><td class="${cls(e.ph)}">${usd(e.ph)}</td></tr>`;
+    <td><span class="chip ${e.vd}">${e.vd}</span> <span class="${cls(e.net)}">${usd(e.net)}</span></td><td class="${cls(e.ph)}">${usd(e.ph)}</td></tr>`;
   }).join('') || '<tr><td colspan="11" class="empty" style="text-align:center;padding:24px">No protocol matches these filters.</td></tr>';
 }
 function tabs() {
@@ -187,9 +178,7 @@ function detail(slug) {
   const vt = r.vt.map(([t, x]) => `<tr><td>${F.termLabel[t]}</td><td>${esc(drv(t))}</td><td>${mult(10 ** x)}</td></tr>`).join('');
   const p0 = 1 / (1 + Math.exp(-r.b0));
   const ot = r.ot.map(([t, x]) => `<tr><td>${F.termLabel[t].replace('years since listed', 'no-token age')}</td><td>${esc(drv(t))}</td><td>${mult(Math.exp(x))} odds</td></tr>`).join('');
-  const band = r.rk === 'c' ? F.catRanges.find((c) => c.cat === r.c) : null;
-  const lo = (k) => r.lv * 10 ** (band ? band[k] : F.resid[k]);
-  const rangeNote = band ? `range from ${esc(r.c)} peers (n=${band.n})` : 'range from all priced comps';
+  const lo = (k) => r.lv * 10 ** F.resid[k];
   const steps = r.st.map(([a, g, c, f, m, w], i) => `<div class="step"><b>${i + 1}</b><span>${esc(a)}</span><small>gas ${usd(g)}${w ? ` x ${S.wk} wk` : ''} | capital ${c ? usd(c * S.dep) : 'none'} | fees ${f ? usd(f * S.dep) : 'none'} | ${m} min${w ? ` x ${S.wk} wk` : ''}</small></div>`).join('');
   const cm = r.cm.map(([n, s, t, m]) => `<tr><td>${esc(n)} ${esc(s)}</td><td>${big(t)}</td><td>${big(m)}</td><td>${(m / t).toFixed(2)}x</td></tr>`).join('');
   d.innerHTML = `<button class="x" id="close" type="button">Close</button>
@@ -200,7 +189,7 @@ function detail(slug) {
   <h3>Farm economics (${usd(S.dep)}, ${Math.round(S.drop * 100)}% drop, ${S.wk} weeks)</h3>
   <div class="formula">slice = ${big(r.v)} x ${Math.round(S.drop * 100)}% x (${usd(S.dep)} / ${big(r.tv)}) = ${usd(e.exp)}<br>net = ${usd(e.exp)} - gas ${usd(e.gas)} - fees ${usd(e.fee)} - carry ${usd(e.carry)} = <b class="${cls(e.net)}">${usd(e.net)}</b><br>${e.hrs.toFixed(1)} h of work = ${usd(e.ph)}/h: <span class="chip ${e.vd}">${e.vd}</span> (FARM needs net >= $20 and >= $10/h)<br>break-even deposit: ${breakEven(r)}</div>
   <h3>How its value is built</h3>
-  <div class="formula">implied = launch value x odds = ${big(r.lv)} x ${(r.o * 100).toFixed(1)}% = ${big(r.v)}<br>range of launch value (${rangeNote}): P25-P75 ${big(lo('p25'))} to ${big(lo('p75'))}, P10-P90 ${big(lo('p10'))} to ${big(lo('p90'))}</div>
+  <div class="formula">implied = launch value x odds = ${big(r.lv)} x ${(r.o * 100).toFixed(1)}% = ${big(r.v)}<br>range of launch value: P25-P75 ${big(lo('p25'))} to ${big(lo('p75'))}, P10-P90 ${big(lo('p10'))} to ${big(lo('p90'))}</div>
   <table class="mini"><thead><tr><th>launch value term</th><th>this protocol</th><th>multiplier</th></tr></thead><tbody><tr><td>fitted starting cap (10^${r.c0})</td><td>fit mean</td><td>${big(10 ** r.c0)}</td></tr>${vt}<tr><td><b>launch value</b></td><td></td><td><b>${big(r.lv)}</b></td></tr></tbody></table>
   <table class="mini" style="margin-top:8px"><thead><tr><th>token odds term</th><th>this protocol</th><th>multiplier</th></tr></thead><tbody><tr><td>base odds of a peer</td><td>fit mean</td><td>${(p0 * 100).toFixed(1)}%</td></tr>${ot}<tr><td><b>token odds</b></td><td></td><td><b>${(r.o * 100).toFixed(1)}%</b></td></tr></tbody></table>
   <p class="mu" style="font-size:11px;margin-top:6px">Growth enters odds negatively: peers with a token lost more TVL in the sealed week (part of their TVL is priced in their own token). A fitted association, not a cause.</p>
