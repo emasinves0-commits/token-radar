@@ -124,3 +124,13 @@ export function econ(steps: Step[], implied: number, tvl: number, deposit: numbe
   const perHour = net / hours;
   return { expected, gas, fees, carry, net, hours, perHour, verdict: net >= 20 && perHour >= 10 ? 'FARM' : net >= 0 ? 'THIN' : 'SKIP' };
 }
+
+/** The smallest deposit at which the plan breaks even (net = 0): the minimum viable capital for
+ *  this protocol at this drop share and horizon. Null when fees and carry outrun the slice at any
+ *  deposit, so no deposit breaks even. The page runs this same arithmetic live. */
+export function breakEvenDeposit(steps: Step[], implied: number, tvl: number, dropShare: number, weeks: number): number | null {
+  const fee = steps.reduce((a, s) => a + s.fee, 0);
+  const gas = steps.reduce((a, s) => a + s.gas * (s.w ? weeks : 1), 0);
+  const k = (implied * dropShare) / tvl - fee - CARRY_APR * (weeks / 52);
+  return k <= 0 ? null : gas / k;
+}
