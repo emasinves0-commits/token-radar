@@ -91,11 +91,14 @@ function solve(A: number[][], b: number[]): number[] {
 }
 
 // ------------------------------------------------------------------ features
-export type Term = 'tvl' | 'cat' | 'age' | 'growth' | 'chains';
+export type Term = 'tvl' | 'cat' | 'age' | 'growth' | 'chains' | 'ageTvl';
+// 'ageTvl' is the interaction of log10(1+years listed) with log10(TVL): it lets the
+// TVL-to-cap slope shift with age instead of forcing one slope on every cohort.
 export const TERM_LABEL: Record<Term, string> = {
   tvl: 'log10 TVL', cat: 'category effect (shrunk)', age: 'years since listed', growth: '7-day TVL growth', chains: 'chains counted',
+  ageTvl: 'age x TVL interaction',
 };
-const TERM_NUM: Term[] = ['tvl', 'age', 'growth', 'chains'];
+const TERM_NUM: Term[] = ['tvl', 'age', 'growth', 'chains', 'ageTvl'];
 
 export interface Feat { slug: string; tvl: number; age: number | null; growth: number | null; chains: number; cat: string; listed: string }
 
@@ -114,6 +117,7 @@ function raw(f: Feat, t: Term): number | null {
     case 'age': return f.age === null ? null : log10(1 + f.age);
     case 'growth': return f.growth === null ? null : clamp(f.growth, -60, 60) / 10;
     case 'chains': return Math.log2(f.chains);
+    case 'ageTvl': return f.age === null ? null : log10(1 + f.age) * f.tvl;
     default: return null;
   }
 }
@@ -306,22 +310,58 @@ export function heldOdds(rows: Feat[], y: number[], terms: Term[] | null, full?:
 const brier = (ps: number[], ys: number[]): number => mean(ps.map((p, i) => (p - ys[i]!) ** 2));
 const rightShare = (ps: number[], ys: number[]): number => mean(ps.map((p, i) => ((p >= 0.5 ? 1 : 0) === ys[i]! ? 1 : 0)));
 
+// ------------------------------------------------------------------ ten-fold held-out test (a third check, shown beside LOO and walk-forward)
+// Folds are interleaved by listing day (every 10th row), so each fold spans the whole era; the gate still
+// requires LOO and walk-forward to improve, and the 10-fold numbers are displayed as confirmation.
+function tenFolds(n: number): { train: number[]; test: number[] }[] {
+  const folds: { train: number[]; test: number[] }[] = [];
+  for (let k = 0; k < 10; k++) {
+    const test = Array.from({ length: n }, (_, i) => i).filter((i) => i % 10 === k);
+    const testSet = new Set(test);
+    folds.push({ train: Array.from({ length: n }, (_, i) => i).filter((i) => !testSet.has(i)), test });
+  }
+  return folds;
+}
+/** Ten-fold held-out absolute log10 misses for one term set (null = the flat-multiple baseline). */
+export function heldValue10(rows: Feat[], y: number[], terms: Term[] | null): number[] {
+  const out: number[] = [];
+  for (const fold of tenFolds(rows.length)) {
+    const fit = fitFor(fold.train.map((k) => rows[k]!), fold.train.map((k) => y[k]!), terms);
+    for (const k of fold.test) out.push(Math.abs(y[k]! - predictValue(fit, rows[k]!)));
+  }
+  return out;
+}
+/** Ten-fold held-out probabilities, pooled across folds in row order (null = the base rate). */
+export function heldOdds10(rows: Feat[], y: number[], terms: Term[] | null): number[] {
+  const out = new Array<number>(rows.length).fill(0);
+  for (const fold of tenFolds(rows.length)) {
+    if (terms === null) {
+      const br = mean(fold.train.map((k) => y[k]!));
+      for (const k of fold.test) out[k] = br;
+    } else {
+      const fit = fitOdds(fold.train.map((k) => rows[k]!), fold.train.map((k) => y[k]!), terms);
+      for (const k of fold.test) out[k] = predictOdds(fit, rows[k]!);
+    }
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ the whole fit
-export interface ValueRow { term: string; loo: number; wf: number; verdict: 'baseline' | 'kept' | 'dropped'; note: string }
-export interface OddsRow { term: string; brierLoo: number; brierWf: number; rightLoo: number; rightWf: number; verdict: 'baseline' | 'kept' | 'dropped' }
+export interface ValueRow { term: string; loo: number; wf: number; t10: number; verdict: 'baseline' | 'kept' | 'dropped'; note: string }
+export interface OddsRow { term: string; brierLoo: number; brierWf: number; brierT10: number; rightLoo: number; rightWf: number; rightT10: number; verdict: 'baseline' | 'kept' | 'dropped' }
 
 export interface Model {
   asOf: string; version: string;
   comps: { f: Feat; y: number; p: Protocol }[]; valueFit: ValueFit; valueKept: Term[];
   valueTable: ValueRow[]; resid: { p10: number; p25: number; p75: number; p90: number; sigma: number };
   calib: { looIqr: number; looIdr: number; wfIqr: number; wfIdr: number; nLoo: number; nWf: number };
-  missFinal: { loo: number; wf: number; baseLoo: number; baseWf: number };
+  missFinal: { loo: number; wf: number; t10: number; baseLoo: number; baseWf: number; baseT10: number };
   oddsFit: OddsFit; oddsKept: Term[]; oddsTable: OddsRow[]; peers: { f: Feat; y: number; slug: string }[];
-  oddsFinal: { brierLoo: number; brierWf: number; baseLoo: number; baseWf: number; n: number; rate: number; nWf: number };
+  oddsFinal: { brierLoo: number; brierWf: number; brierT10: number; baseLoo: number; baseWf: number; baseT10: number; n: number; rate: number; nWf: number };
   ageBars: { label: string; n: number; real: number; pred: number }[];
 }
 
-const VALUE_ORDER: Term[] = ['tvl', 'cat', 'age', 'growth', 'chains'];
+const VALUE_ORDER: Term[] = ['tvl', 'ageTvl', 'cat', 'age', 'growth', 'chains'];
 const ODDS_ORDER: Term[] = ['age', 'tvl', 'growth', 'cat', 'chains'];
 const byListed = <T extends { f: Feat }>(a: T, b: T): number => (a.f.listed < b.f.listed ? -1 : a.f.listed > b.f.listed ? 1 : a.f.slug < b.f.slug ? -1 : 1);
 const OUT_OF_UNIVERSE = (p: Protocol): boolean => p.category === 'CEX' || (p.category !== null && (BRIDGE.has(p.category) || STAKING.has(p.category))) || EXCHANGE.test(p.name);
@@ -339,15 +379,17 @@ export function fitModel(snap: Snapshot): Model {
   const F = comps.map((c) => c.f), Y = comps.map((c) => c.y);
 
   const base = heldValue(F, Y, null);
-  const valueTable: ValueRow[] = [{ term: 'flat median multiple (baseline)', loo: round(10 ** median(base.loo), 3), wf: round(10 ** median(base.wf), 3), verdict: 'baseline', note: 'cap = TVL x median(cap/TVL)' }];
-  let kept: Term[] = [], cur = base;
+  const base10 = heldValue10(F, Y, null);
+  const valueTable: ValueRow[] = [{ term: 'flat median multiple (baseline)', loo: round(10 ** median(base.loo), 3), wf: round(10 ** median(base.wf), 3), t10: round(10 ** median(base10), 3), verdict: 'baseline', note: 'cap = TVL x median(cap/TVL)' }];
+  let kept: Term[] = [], cur = base, cur10 = base10;
   for (const t of VALUE_ORDER) {
     const trial = [...kept, t];
     const h = heldValue(F, Y, trial);
-    const mLoo = median(h.loo), mWf = median(h.wf);
+    const h10 = heldValue10(F, Y, trial);
+    const mLoo = median(h.loo), mWf = median(h.wf), mT10 = median(h10);
     const ok = mLoo < median(cur.loo) && mWf < median(cur.wf);
-    valueTable.push({ term: `+ ${TERM_LABEL[t]}`, loo: round(10 ** mLoo, 3), wf: round(10 ** mWf, 3), verdict: ok ? 'kept' : 'dropped', note: ok ? 'lowers both held-out misses' : 'does not lower both' });
-    if (ok) { kept = trial; cur = h; }
+    valueTable.push({ term: `+ ${TERM_LABEL[t]}`, loo: round(10 ** mLoo, 3), wf: round(10 ** mWf, 3), t10: round(10 ** mT10, 3), verdict: ok ? 'kept' : 'dropped', note: ok ? 'lowers both held-out misses' : 'does not lower both' });
+    if (ok) { kept = trial; cur = h; cur10 = h10; }
   }
   if (kept.length === 0) kept = ['tvl'];
   const valueFit = fitValue(F, Y, kept);
@@ -378,28 +420,30 @@ export function fitModel(snap: Snapshot): Model {
     }
   }
   const calib = { looIqr: inI / lr.length, looIdr: inD / lr.length, wfIqr: wI / wN, wfIdr: wD / wN, nLoo: lr.length, nWf: wN };
-  const missFinal = { loo: 10 ** median(cur.loo), wf: 10 ** median(cur.wf), baseLoo: 10 ** median(base.loo), baseWf: 10 ** median(base.wf) };
+  const missFinal = { loo: 10 ** median(cur.loo), wf: 10 ** median(cur.wf), t10: 10 ** median(cur10), baseLoo: 10 ** median(base.loo), baseWf: 10 ** median(base.wf), baseT10: 10 ** median(base10) };
 
   // odds peers: protocols of the kinds the board prices; a recorded token id is the outcome (kin of a token are left out).
   const peerP = snap.protocols.filter((p) => !(p.symbol && !p.gecko_id) && !OUT_OF_UNIVERSE(p) && !VERSION.test(p.name) && !WRAPPED.test(p.name));
   const peers = peerP.map((p) => ({ f: featOf(p, snap.as_of), y: p.gecko_id ? 1 : 0, slug: p.slug })).sort(byListed);
   const PF = peers.map((p) => p.f), PY = peers.map((p) => p.y);
   const bH = heldOdds(PF, PY, null);
+  const bH10 = heldOdds10(PF, PY, null);
   const wfIdx = bH.wf.map((w) => w.i), wfY = wfIdx.map((i) => PY[i]!);
   const oddsTable: OddsRow[] = [{
-    term: 'base rate (baseline)', brierLoo: brier(bH.loo, PY), brierWf: brier(bH.wf.map((w) => w.p), wfY),
-    rightLoo: rightShare(bH.loo, PY), rightWf: rightShare(bH.wf.map((w) => w.p), wfY), verdict: 'baseline',
+    term: 'base rate (baseline)', brierLoo: brier(bH.loo, PY), brierWf: brier(bH.wf.map((w) => w.p), wfY), brierT10: brier(bH10, PY),
+    rightLoo: rightShare(bH.loo, PY), rightWf: rightShare(bH.wf.map((w) => w.p), wfY), rightT10: rightShare(bH10, PY), verdict: 'baseline',
   }];
-  let oKept: Term[] = [], oCur = { bl: oddsTable[0]!.brierLoo, bw: oddsTable[0]!.brierWf };
+  let oKept: Term[] = [], oCur = { bl: oddsTable[0]!.brierLoo, bw: oddsTable[0]!.brierWf, bt: oddsTable[0]!.brierT10 };
   let oFit: OddsFit | undefined;
   for (const t of ODDS_ORDER) {
     const trial = [...oKept, t];
     const full = fitOdds(PF, PY, trial);
     const h = heldOdds(PF, PY, trial, full);
-    const bl = brier(h.loo, PY), bw = brier(h.wf.map((w) => w.p), wfY);
+    const h10 = heldOdds10(PF, PY, trial);
+    const bl = brier(h.loo, PY), bw = brier(h.wf.map((w) => w.p), wfY), bt = brier(h10, PY);
     const ok = bl < oCur.bl && bw < oCur.bw;
-    oddsTable.push({ term: `+ ${t === 'age' ? 'no-token age (years since listed)' : TERM_LABEL[t]}`, brierLoo: bl, brierWf: bw, rightLoo: rightShare(h.loo, PY), rightWf: rightShare(h.wf.map((w) => w.p), wfY), verdict: ok ? 'kept' : 'dropped' });
-    if (ok) { oKept = trial; oCur = { bl, bw }; oFit = full; }
+    oddsTable.push({ term: `+ ${t === 'age' ? 'no-token age (years since listed)' : TERM_LABEL[t]}`, brierLoo: bl, brierWf: bw, brierT10: bt, rightLoo: rightShare(h.loo, PY), rightWf: rightShare(h.wf.map((w) => w.p), wfY), rightT10: rightShare(h10, PY), verdict: ok ? 'kept' : 'dropped' });
+    if (ok) { oKept = trial; oCur = { bl, bw, bt }; oFit = full; }
   }
   if (oKept.length === 0) { oKept = ['age']; oFit = fitOdds(PF, PY, oKept); }
   const oddsFit = oFit!;
@@ -412,9 +456,9 @@ export function fitModel(snap: Snapshot): Model {
     ageBars.push({ label: b + 2 === edges.length ? `${edges[b]}y+` : `${edges[b]}-${edges[b + 1]}y`, n: idx.length, real: mean(idx.map((i) => PY[i]!)), pred: mean(idx.map((i) => fh.loo[i]!)) });
   }
   return {
-    asOf: snap.as_of, version: 'radar-2.0', comps, valueFit, valueKept: kept, valueTable, resid, calib, missFinal,
+    asOf: snap.as_of, version: 'radar-3.0', comps, valueFit, valueKept: kept, valueTable, resid, calib, missFinal,
     oddsFit, oddsKept: oKept, oddsTable, peers,
-    oddsFinal: { brierLoo: oCur.bl, brierWf: oCur.bw, baseLoo: oddsTable[0]!.brierLoo, baseWf: oddsTable[0]!.brierWf, n: PY.length, rate: mean(PY), nWf: wfY.length },
+    oddsFinal: { brierLoo: oCur.bl, brierWf: oCur.bw, brierT10: oCur.bt, baseLoo: oddsTable[0]!.brierLoo, baseWf: oddsTable[0]!.brierWf, baseT10: oddsTable[0]!.brierT10, n: PY.length, rate: mean(PY), nWf: wfY.length },
     ageBars,
   };
 }
