@@ -48,7 +48,7 @@
   <section id="compare" class="card"><h2>Compare <small>tick up to 4 rows on the board</small></h2><div id="cmp"></div></section>
   <section class="card" id="method">
     <h2>How a launch is priced</h2>
-    <p><b>Launch value</b> is the market cap a protocol's token could carry: log10(cap) is fitted on log10(TVL) across protocols whose token trades, one row per ticker. Each extra term (category, age, growth, chains) is kept only if it lowers the held-out miss in both a leave-one-out and a walk-forward test.</p>
+    <p><b>Launch value</b> is the market cap a protocol's token could carry: log10(cap) is fitted on log10(TVL) across protocols whose token trades, one row per ticker. Each extra term (an age x TVL interaction, category, age, growth, chains) is kept only if it lowers the held-out miss in both a leave-one-out and a walk-forward test; a 10-fold test is shown as a third check. The interaction survives: at the same TVL, an older protocol's launch prices lower, so the TVL-to-cap slope shifts with age.</p>
     <p><b>Token odds</b> is the chance that a protocol like it ever records a token: a logistic regression fitted by gradient descent on its peers, on how long it has run with no token, its 7-day TVL growth and its category.</p>
     <p><b>Implied value = launch value x odds.</b> A protocol records no token in DefiLlama's data; that is the entry's own estimate, not a prediction of when or whether one is issued. Gas figures per chain are stated assumptions.</p>
   </section>
