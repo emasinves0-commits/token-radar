@@ -77,15 +77,15 @@ function checks() {
 
 // ---------- out-of-sample evidence
 function evidence() {
-  const vr = F.valueTable.map((r) => `<tr><td>${esc(r.term)}</td><td>${r.loo.toFixed(2)}x</td><td>${r.wf.toFixed(2)}x</td><td class="${r.verdict === 'kept' ? 'kept' : r.verdict === 'dropped' ? 'drop' : ''}">${r.verdict}</td></tr>`).join('');
+  const vr = F.valueTable.map((r) => `<tr><td>${esc(r.term)}</td><td>${r.loo.toFixed(2)}x</td><td>${r.wf.toFixed(2)}x</td><td>${r.t10.toFixed(2)}x</td><td class="${r.verdict === 'kept' ? 'kept' : r.verdict === 'dropped' ? 'drop' : ''}">${r.verdict}</td></tr>`).join('');
   const o = F.oddsFinal, v = F.valueCoef;
   $('#evV').className = 'ev';
-  $('#evV').innerHTML = `<h3>Value model: median miss multiple on held-out protocols</h3><table><thead><tr><th>term, added in order</th><th>leave-one-out</th><th>walk-forward</th><th>verdict</th></tr></thead><tbody>${vr}</tbody></table>
-  <p class="foot">Fitted on ${v.nComps} traded tokens (one per ticker): log10 cap = ${v.c0} + ${v.tvl} x z(log10 TVL). Kept: ${esc(F.valueKept.join(', '))}. Spread (LOO P10 / P25 / P75 / P90): ${F.resid.p10} / ${F.resid.p25} / ${F.resid.p75} / ${F.resid.p90} dex. A term stays only if it lowers both misses.</p>`;
-  const or = F.oddsTable.map((r) => `<tr><td>${esc(r.term)}</td><td>${r.brierLoo.toFixed(3)}</td><td>${r.brierWf.toFixed(3)}</td><td>${Math.round(r.rightLoo * 100)}% / ${Math.round(r.rightWf * 100)}%</td><td class="${r.verdict === 'kept' ? 'kept' : r.verdict === 'dropped' ? 'drop' : ''}">${r.verdict}</td></tr>`).join('');
+  $('#evV').innerHTML = `<h3>Value model: median miss multiple on held-out protocols</h3><table><thead><tr><th>term, added in order</th><th>leave-one-out</th><th>walk-forward</th><th>10-fold</th><th>verdict</th></tr></thead><tbody>${vr}</tbody></table>
+  <p class="foot">Fitted on ${v.nComps} traded tokens (one per ticker): log10 cap = ${v.c0} + ${v.tvl} x z(log10 TVL) ${v.ageTvl < 0 ? '-' : '+'} ${Math.abs(v.ageTvl)} x z(age x TVL). Kept: ${esc(F.valueKept.join(', '))}. Spread (LOO P10 / P25 / P75 / P90): ${F.resid.p10} / ${F.resid.p25} / ${F.resid.p75} / ${F.resid.p90} dex. A term stays only if it lowers both the leave-one-out and the walk-forward miss; the 10-fold column is a third check on the same terms. The interaction is negative: at the same TVL, an older protocol's launch prices lower, because its TVL is older money.</p>`;
+  const or = F.oddsTable.map((r) => `<tr><td>${esc(r.term)}</td><td>${r.brierLoo.toFixed(3)}</td><td>${r.brierWf.toFixed(3)}</td><td>${r.brierT10.toFixed(3)}</td><td>${Math.round(r.rightLoo * 100)}% / ${Math.round(r.rightWf * 100)}%</td><td class="${r.verdict === 'kept' ? 'kept' : r.verdict === 'dropped' ? 'drop' : ''}">${r.verdict}</td></tr>`).join('');
   $('#evO').className = 'ev';
-  $('#evO').innerHTML = `<h3>Odds model: Brier score (lower is better) vs the base rate</h3><table><thead><tr><th>term, added in order</th><th>LOO</th><th>walk-fwd</th><th>called right</th><th>verdict</th></tr></thead><tbody>${or}</tbody></table>
-  <p class="foot">${o.n} peers, ${Math.round(o.rate * 100)}% record a token. Final model: Brier ${o.brierLoo.toFixed(3)} LOO / ${o.brierWf.toFixed(3)} walk-forward vs ${o.baseLoo.toFixed(3)} / ${o.baseWf.toFixed(3)} for the base rate. Called right = share on the right side of 50%, LOO / walk-forward. Odds lean on age (late listings have had little time to launch). Growth enters negatively: in this sealed week peers with a token lost TVL more often, since part of their TVL is priced in their own token. A fitted association, not a cause.</p>`;
+  $('#evO').innerHTML = `<h3>Odds model: Brier score (lower is better) vs the base rate</h3><table><thead><tr><th>term, added in order</th><th>LOO</th><th>walk-fwd</th><th>10-fold</th><th>called right</th><th>verdict</th></tr></thead><tbody>${or}</tbody></table>
+  <p class="foot">${o.n} peers, ${Math.round(o.rate * 100)}% record a token. Final model: Brier ${o.brierLoo.toFixed(3)} LOO / ${o.brierWf.toFixed(3)} walk-forward / ${o.brierT10.toFixed(3)} 10-fold vs ${o.baseLoo.toFixed(3)} / ${o.baseWf.toFixed(3)} / ${o.baseT10.toFixed(3)} for the base rate. Called right = share on the right side of 50%, LOO / walk-forward. Odds lean on age (late listings have had little time to launch). Growth enters negatively: in this sealed week peers with a token lost TVL more often, since part of their TVL is priced in their own token. A fitted association, not a cause.</p>`;
 }
 
 function canvas(id, draw) {
@@ -174,7 +174,7 @@ function breakEven(r) {
 function detail(slug) {
   const r = bySlug.get(slug), e = E.get(slug), d = $('#detail');
   S.sel = slug; d.hidden = false;
-  const drv = (t) => (t === 'tvl' ? big(r.tv) : t === 'age' ? yrs(r.a) : t === 'growth' ? pct(r.g) : t === 'chains' ? `${r.h.length} chains` : r.c || 'none');
+  const drv = (t) => (t === 'tvl' ? big(r.tv) : t === 'age' ? yrs(r.a) : t === 'growth' ? pct(r.g) : t === 'chains' ? `${r.h.length} chains` : t === 'ageTvl' ? `${yrs(r.a)} × ${big(r.tv)}` : r.c || 'none');
   const vt = r.vt.map(([t, x]) => `<tr><td>${F.termLabel[t]}</td><td>${esc(drv(t))}</td><td>${mult(10 ** x)}</td></tr>`).join('');
   const p0 = 1 / (1 + Math.exp(-r.b0));
   const ot = r.ot.map(([t, x]) => `<tr><td>${F.termLabel[t].replace('years since listed', 'no-token age')}</td><td>${esc(drv(t))}</td><td>${mult(Math.exp(x))} odds</td></tr>`).join('');
